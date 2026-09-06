@@ -19,11 +19,17 @@ type ManualStatusPatch = {
   finishedAt?: Date | null;
 };
 
+export type ReadingStatusThresholds = {
+  readingThreshold: number;
+  finishedThreshold: number;
+};
+
 export type AutoReadingActivity = {
   occurredOn?: string;
   origin?: 'bookorbit' | 'kobo' | 'koreader';
   strongRereadEvidence?: boolean;
   meaningfulActivity?: boolean;
+  thresholds?: ReadingStatusThresholds;
 };
 
 @Injectable()

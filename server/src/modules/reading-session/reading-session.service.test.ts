@@ -1,10 +1,12 @@
 import { BadRequestException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Test } from '@nestjs/testing';
 
 import type { RequestUser } from '../../common/types/request-user';
 import { BookService } from '../book/book.service';
 import { ReadingSessionRepository, type SaveReadingSessionResult } from './reading-session.repository';
 import { ReadingSessionService } from './reading-session.service';
+import { AchievementEventsService } from '../achievement/achievement-events.service';
 import { EMPTY_CONTENT_FILTER_RULES, type ReadingSessionSource } from '@bookorbit/types';
 
 function makeUser(overrides?: Partial<RequestUser>): RequestUser {
@@ -38,22 +40,52 @@ const mockRepo = {
 
 const mockBookService = {
   verifyFileAccess: vi.fn<(...args: [number, RequestUser]) => Promise<void>>(),
+  autoUpdateReadStatusForProgress: vi.fn(),
 };
 
 describe('ReadingSessionService', () => {
   let service: ReadingSessionService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     mockRepo.saveSession.mockResolvedValue({ kind: 'saved' });
     mockBookService.verifyFileAccess.mockResolvedValue(undefined);
     vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    service = new ReadingSessionService(
-      mockRepo as unknown as ReadingSessionRepository,
-      mockBookService as unknown as BookService,
-      { emit: vi.fn() } as never,
-    );
+    const module = await Test.createTestingModule({
+      providers: [
+        ReadingSessionService,
+        { provide: ReadingSessionRepository, useValue: mockRepo },
+        { provide: BookService, useValue: mockBookService },
+        { provide: AchievementEventsService, useValue: { emit: vi.fn() } },
+      ],
+    }).compile();
+    service = module.get(ReadingSessionService);
+  });
+
+  it('preserves Kobo activity and thresholds and does not replay status updates for duplicate sessions', async () => {
+    const file = { id: 42, bookId: 91, libraryId: 1 };
+    mockBookService.verifyFileAccess.mockResolvedValue(file as never);
+    const thresholds = { readingThreshold: 1, finishedThreshold: 99 };
+    const session = {
+      sessionId: 'delayed-kobo',
+      startedAt: '2026-09-06T06:30:00Z',
+      endedAt: '2026-09-06T07:06:00Z',
+      durationSeconds: 2160,
+      progressDelta: 9,
+      endProgress: 95,
+    };
+    await service.save(42, session, makeUser(), 'kobo', undefined, thresholds);
+    expect(mockBookService.autoUpdateReadStatusForProgress).toHaveBeenCalledExactlyOnceWith(7, file, 95, {
+      origin: 'kobo',
+      occurredOn: '2026-09-06',
+      meaningfulActivity: true,
+      thresholds,
+    });
+    mockRepo.saveSession.mockResolvedValue({ kind: 'skipped', reason: 'duplicate_session_id' });
+    await service.save(42, session, makeUser(), 'kobo', undefined, thresholds);
+    expect(mockBookService.autoUpdateReadStatusForProgress).toHaveBeenCalledTimes(1);
+    expect(mockRepo.saveSession).toHaveBeenCalledTimes(2);
   });
 
   it('verifies access and persists a session with wall-clock clamped duration', async () => {

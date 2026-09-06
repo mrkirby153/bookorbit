@@ -2454,6 +2454,15 @@ describe('BookService', () => {
       expect(userBookStatusService.autoUpdate).toHaveBeenCalledWith(user.id, 11, 50, 3, 97);
     });
 
+    it('uses Kobo activity thresholds instead of the library thresholds', async () => {
+      const { service, libraryService, userBookStatusService } = makeService();
+      libraryService.findOne = vi.fn().mockResolvedValue({ readingThreshold: 3, markAsFinishedPercentComplete: 95 });
+      const activity = { origin: 'kobo' as const, meaningfulActivity: true, thresholds: { readingThreshold: 1, finishedThreshold: 99 } };
+      await service.autoUpdateReadStatusForProgress(7, { bookId: 91, libraryId: 2 }, 95, activity);
+      expect(userBookStatusService.autoUpdate).toHaveBeenCalledWith(7, 91, 95, 1, 99, activity);
+      expect(libraryService.findOne).not.toHaveBeenCalled();
+    });
+
     it('does not fail progress save when auto status update fails', async () => {
       const { service, bookRepo, libraryService, userBookStatusService } = makeService();
       const user = makeUser();

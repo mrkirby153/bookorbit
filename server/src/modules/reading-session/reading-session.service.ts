@@ -7,6 +7,7 @@ import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { resolveTimeZone } from '../../common/utils/timezone.utils';
 import { BookService } from '../book/book.service';
+import type { ReadingStatusThresholds } from '../user-book-status/user-book-status.service';
 import { AchievementEventsService, ACHIEVEMENT_EVENT_READING_SESSION_SAVED } from '../achievement/achievement-events.service';
 import type { CreateManualReadingSessionDto } from './dto/create-manual-reading-session.dto';
 import type { ListBookReadingSessionsDto } from './dto/list-book-reading-sessions.dto';
@@ -38,6 +39,7 @@ export class ReadingSessionService {
     user: RequestUser,
     source: ReadingSessionSource = 'web',
     sync?: ReadingSessionSyncOptions,
+    thresholds?: ReadingStatusThresholds,
   ): Promise<void> {
     const event = 'reading_session.save';
     const startedAtMs = Date.now();
@@ -85,9 +87,10 @@ export class ReadingSessionService {
         const meaningfulActivity = durationSeconds >= 300 || (dto.progressDelta ?? 0) >= 1;
         if (meaningfulActivity && file && dto.endProgress != null) {
           await this.bookService.autoUpdateReadStatusForProgress(user.id, file, dto.endProgress, {
-            origin: source === 'koreader' ? 'koreader' : 'bookorbit',
+            origin: source === 'koreader' || source === 'kobo' ? source : 'bookorbit',
             occurredOn: endedAt.toISOString().slice(0, 10),
             meaningfulActivity: true,
+            ...(thresholds ? { thresholds } : {}),
           });
         }
         this.achievementEvents.emit(ACHIEVEMENT_EVENT_READING_SESSION_SAVED, {

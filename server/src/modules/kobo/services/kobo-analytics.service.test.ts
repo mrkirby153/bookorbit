@@ -1,22 +1,31 @@
 import { Logger } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
 
 import type { KoboAnalyticsEvent } from '../kobo-analytics.types';
 import { KoboAnalyticsService } from './kobo-analytics.service';
+import { KoboBookIdentityService } from './kobo-book-identity.service';
+import { KoboAnalyticsResolverService } from './kobo-analytics-resolver.service';
+import { KoboSettingsService } from './kobo-settings.service';
+import { ReadingSessionService } from '../../reading-session/reading-session.service';
+import { BookService } from '../../book/book.service';
 
 describe('KoboAnalyticsService', () => {
   const bookIdentityService = { resolveBookIdByEntitlementId: vi.fn() };
   const resolver = { resolveBookFileId: vi.fn() };
   const readingSessionService = { save: vi.fn() };
   const bookService = { bulkSetRating: vi.fn() };
+  const settingsService = { getSettings: vi.fn() };
+  const thresholds = { readingThreshold: 1, finishedThreshold: 99 };
+  let service: KoboAnalyticsService;
   const user = { id: 7 } as never;
   const device = { deviceId: 2, deviceToken: 'tok', userId: 7 } as never;
   const syncOptions = { sourceDeviceKey: '2', estimateSessionIdPrefix: 'kst:2:' };
 
   function makeService() {
-    return new KoboAnalyticsService(bookIdentityService as never, resolver as never, readingSessionService as never, bookService as never);
+    return service;
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     bookIdentityService.resolveBookIdByEntitlementId.mockImplementation((_userId: number, id: string) =>
       /^\d+$/.test(id) ? Promise.resolve(Number(id)) : Promise.resolve(null),
@@ -24,6 +33,18 @@ describe('KoboAnalyticsService', () => {
     resolver.resolveBookFileId.mockResolvedValue({ kind: 'resolved', bookFileId: 100 });
     readingSessionService.save.mockResolvedValue(undefined);
     bookService.bulkSetRating.mockResolvedValue(undefined);
+    settingsService.getSettings.mockResolvedValue(thresholds);
+    const module = await Test.createTestingModule({
+      providers: [
+        KoboAnalyticsService,
+        { provide: KoboBookIdentityService, useValue: bookIdentityService },
+        { provide: KoboAnalyticsResolverService, useValue: resolver },
+        { provide: ReadingSessionService, useValue: readingSessionService },
+        { provide: BookService, useValue: bookService },
+        { provide: KoboSettingsService, useValue: settingsService },
+      ],
+    }).compile();
+    service = module.get(KoboAnalyticsService);
   });
 
   it('maps LeaveContent to reading sessions (duration minimum enforced in ReadingSessionService.save)', async () => {
@@ -56,6 +77,7 @@ describe('KoboAnalyticsService', () => {
     expect(resolver.resolveBookFileId).toHaveBeenCalledTimes(3);
     expect(resolver.resolveBookFileId).toHaveBeenCalledWith(7, 2, 1);
     expect(readingSessionService.save).toHaveBeenCalledTimes(3);
+    expect(settingsService.getSettings).toHaveBeenCalledExactlyOnceWith(7);
     expect(readingSessionService.save).toHaveBeenNthCalledWith(
       1,
       100,
@@ -70,6 +92,7 @@ describe('KoboAnalyticsService', () => {
       user,
       'kobo',
       syncOptions,
+      thresholds,
     );
     expect(readingSessionService.save).toHaveBeenNthCalledWith(
       2,
@@ -82,6 +105,7 @@ describe('KoboAnalyticsService', () => {
       user,
       'kobo',
       syncOptions,
+      thresholds,
     );
     expect(readingSessionService.save).toHaveBeenNthCalledWith(
       3,
@@ -93,6 +117,7 @@ describe('KoboAnalyticsService', () => {
       user,
       'kobo',
       syncOptions,
+      thresholds,
     );
   });
 
@@ -113,7 +138,14 @@ describe('KoboAnalyticsService', () => {
       device,
     );
 
-    expect(readingSessionService.save).toHaveBeenCalledWith(100, expect.objectContaining({ sessionId: 'kobo-src' }), user, 'kobo', syncOptions);
+    expect(readingSessionService.save).toHaveBeenCalledWith(
+      100,
+      expect.objectContaining({ sessionId: 'kobo-src' }),
+      user,
+      'kobo',
+      syncOptions,
+      thresholds,
+    );
   });
 
   it('pairs OpenContent and LeaveContent to save progress delta and Kobo-reported duration', async () => {
@@ -169,6 +201,7 @@ describe('KoboAnalyticsService', () => {
       user,
       'kobo',
       syncOptions,
+      thresholds,
     );
     expect(readingSessionService.save).toHaveBeenNthCalledWith(
       2,
@@ -184,6 +217,7 @@ describe('KoboAnalyticsService', () => {
       user,
       'kobo',
       syncOptions,
+      thresholds,
     );
   });
 
@@ -230,6 +264,7 @@ describe('KoboAnalyticsService', () => {
       user,
       'kobo',
       syncOptions,
+      thresholds,
     );
     expect(readingSessionService.save).toHaveBeenNthCalledWith(
       2,
@@ -238,6 +273,7 @@ describe('KoboAnalyticsService', () => {
       user,
       'kobo',
       syncOptions,
+      thresholds,
     );
   });
 
@@ -270,6 +306,7 @@ describe('KoboAnalyticsService', () => {
       user,
       'kobo',
       syncOptions,
+      thresholds,
     );
   });
 
@@ -310,6 +347,7 @@ describe('KoboAnalyticsService', () => {
       user,
       'kobo',
       syncOptions,
+      thresholds,
     );
   });
 
@@ -337,8 +375,24 @@ describe('KoboAnalyticsService', () => {
       device,
     );
 
-    expect(readingSessionService.save).toHaveBeenNthCalledWith(1, 100, expect.objectContaining({ endProgress: null }), user, 'kobo', syncOptions);
-    expect(readingSessionService.save).toHaveBeenNthCalledWith(2, 100, expect.objectContaining({ endProgress: null }), user, 'kobo', syncOptions);
+    expect(readingSessionService.save).toHaveBeenNthCalledWith(
+      1,
+      100,
+      expect.objectContaining({ endProgress: null }),
+      user,
+      'kobo',
+      syncOptions,
+      thresholds,
+    );
+    expect(readingSessionService.save).toHaveBeenNthCalledWith(
+      2,
+      100,
+      expect.objectContaining({ endProgress: null }),
+      user,
+      'kobo',
+      syncOptions,
+      thresholds,
+    );
   });
 
   it('still processes later events when an earlier save throws', async () => {
@@ -424,6 +478,7 @@ describe('KoboAnalyticsService', () => {
       user,
       'kobo',
       syncOptions,
+      thresholds,
     );
   });
 
