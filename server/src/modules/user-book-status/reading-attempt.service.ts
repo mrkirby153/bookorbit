@@ -261,7 +261,8 @@ export class ReadingAttemptService {
       const hasCompleted = await this.repo.hasCompleted(tx, input.userId, input.bookId);
       const isFinished = input.progress >= input.finishThreshold;
 
-      if (!active && hasCompleted && !input.strongRereadEvidence && !input.meaningfulActivity) return null;
+      // Delayed sessions can belong to the completed read, regardless of their duration or progress gain.
+      if (!active && hasCompleted && !input.strongRereadEvidence) return null;
       if (!active && isFinished && !hasCompleted) {
         latest = await this.repo.create(tx, {
           userId: input.userId,
