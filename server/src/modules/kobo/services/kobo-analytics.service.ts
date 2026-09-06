@@ -9,6 +9,8 @@ import type { KoboAnalyticsBody, KoboAnalyticsEvent } from '../kobo-analytics.ty
 import { koboSourceDeviceKey, koboStatisticsSessionIdPrefix } from '../kobo-statistics-session.util';
 import { KoboBookIdentityService } from './kobo-book-identity.service';
 import { KoboAnalyticsResolverService } from './kobo-analytics-resolver.service';
+import { KoboSettingsService } from './kobo-settings.service';
+import type { ReadingStatusThresholds } from '../../user-book-status/user-book-status.service';
 
 const DEBUG_PAYLOAD_MAX_LENGTH = 4000;
 
@@ -68,17 +70,29 @@ export class KoboAnalyticsService {
     private readonly resolver: KoboAnalyticsResolverService,
     private readonly readingSessionService: ReadingSessionService,
     private readonly bookService: BookService,
+    private readonly settingsService: KoboSettingsService,
   ) {}
 
   async ingest(body: KoboAnalyticsBody | null | undefined, user: RequestUser, device: KoboDeviceContext): Promise<void> {
     const events = this.normalizeEvents(body, user.id);
     this.logBatch(body, events, user.id, device.deviceId);
     const leaveContentContexts = this.buildLeaveContentContexts(events);
+    let thresholds: ReadingStatusThresholds | undefined;
 
     for (const ev of events) {
       try {
         if (ev.EventType === 'LeaveContent') {
-          await this.handleLeaveContent(ev, user, device.deviceId, leaveContentContexts.get(ev) ?? { progressDelta: null, startedAtMs: null });
+          if (!thresholds) {
+            const settings = await this.settingsService.getSettings(user.id);
+            thresholds = { readingThreshold: settings.readingThreshold, finishedThreshold: settings.finishedThreshold };
+          }
+          await this.handleLeaveContent(
+            ev,
+            user,
+            device.deviceId,
+            leaveContentContexts.get(ev) ?? { progressDelta: null, startedAtMs: null },
+            thresholds,
+          );
         } else if (ev.EventType === 'RateBook') {
           await this.handleRateBook(ev, user);
         }
@@ -130,7 +144,13 @@ export class KoboAnalyticsService {
     await this.bookService.bulkSetRating([bookId], rating, user);
   }
 
-  private async handleLeaveContent(ev: KoboAnalyticsEvent, user: RequestUser, deviceId: number, context: LeaveContentContext): Promise<void> {
+  private async handleLeaveContent(
+    ev: KoboAnalyticsEvent,
+    user: RequestUser,
+    deviceId: number,
+    context: LeaveContentContext,
+    thresholds: ReadingStatusThresholds,
+  ): Promise<void> {
     const volumeid = this.extractVolumeId(ev);
     const durationSeconds = parseKoboDurationSeconds(ev.Metrics);
     if (volumeid === null || durationSeconds === null) {
@@ -183,6 +203,7 @@ export class KoboAnalyticsService {
         sourceDeviceKey: koboSourceDeviceKey(deviceId),
         estimateSessionIdPrefix: koboStatisticsSessionIdPrefix(deviceId),
       },
+      thresholds,
     );
   }
 

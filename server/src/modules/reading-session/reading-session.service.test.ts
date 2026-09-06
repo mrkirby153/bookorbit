@@ -51,6 +51,7 @@ const mockRepo = {
 
 const mockBookService = {
   verifyFileAccess: vi.fn<(...args: [number, RequestUser]) => Promise<void>>(),
+  autoUpdateReadStatusForProgress: vi.fn(),
 };
 
 const mockUserStatistics = { invalidateUser: vi.fn() };
@@ -70,6 +71,32 @@ describe('ReadingSessionService', () => {
       { emit: vi.fn() } as never,
       mockUserStatistics as never,
     );
+  });
+
+  it('preserves Kobo activity and thresholds and does not replay status updates for duplicate sessions', async () => {
+    const file = { id: 42, bookId: 91, libraryId: 1 };
+    mockBookService.verifyFileAccess.mockResolvedValue(file as never);
+    const thresholds = { readingThreshold: 1, finishedThreshold: 99 };
+    const session = {
+      sessionId: 'delayed-kobo',
+      startedAt: '2026-09-06T06:30:00Z',
+      endedAt: '2026-09-06T07:06:00Z',
+      durationSeconds: 2160,
+      progressDelta: 9,
+      endProgress: 95,
+    };
+    await service.save(42, session, makeUser(), 'kobo', undefined, thresholds);
+    expect(mockBookService.autoUpdateReadStatusForProgress).toHaveBeenCalledExactlyOnceWith(7, file, 95, {
+      origin: 'kobo',
+      occurredAt: new Date('2026-09-06T07:06:00Z'),
+      timeZone: 'UTC',
+      meaningfulActivity: true,
+      thresholds,
+    });
+    mockRepo.saveSession.mockResolvedValue({ kind: 'skipped', reason: 'duplicate_session_id' });
+    await service.save(42, session, makeUser(), 'kobo', undefined, thresholds);
+    expect(mockBookService.autoUpdateReadStatusForProgress).toHaveBeenCalledTimes(1);
+    expect(mockRepo.saveSession).toHaveBeenCalledTimes(2);
   });
 
   it('verifies access and persists a session with wall-clock clamped duration', async () => {

@@ -21,6 +21,11 @@ type ManualStatusPatch = {
   finishedAt?: Date | null;
 };
 
+export type ReadingStatusThresholds = {
+  readingThreshold: number;
+  finishedThreshold: number;
+};
+
 export type AutoReadingActivity = {
   /** The instant the activity happened. The calendar day is derived from it per reader timezone. */
   occurredAt?: Date;
@@ -29,6 +34,7 @@ export type AutoReadingActivity = {
   origin?: 'bookorbit' | 'kobo' | 'koreader';
   strongRereadEvidence?: boolean;
   meaningfulActivity?: boolean;
+  thresholds?: ReadingStatusThresholds;
 };
 
 @Injectable()
