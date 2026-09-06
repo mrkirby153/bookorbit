@@ -1,8 +1,10 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { ReadingAttemptOrigin, ReadingAttemptOutcome, ReadStatus } from '@bookorbit/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Test } from '@nestjs/testing';
 
 import { ReadingAttemptService } from './reading-attempt.service';
+import { ReadingAttemptRepository } from './reading-attempt.repository';
 
 type Row = {
   id: number;
@@ -132,9 +134,64 @@ describe('ReadingAttemptService', () => {
   let fake: ReturnType<typeof makeFakeRepo>;
   let service: ReadingAttemptService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     fake = makeFakeRepo();
-    service = new ReadingAttemptService(fake.repo as never);
+    const module = await Test.createTestingModule({
+      providers: [ReadingAttemptService, { provide: ReadingAttemptRepository, useValue: fake.repo }],
+    }).compile();
+    service = module.get(ReadingAttemptService);
+  });
+
+  it.each([86, 95, 99])('keeps delayed %s%% sessions on the completed read without changing its Hardcover association', async (progress) => {
+    const attempt = await fake.repo.create(
+      {},
+      {
+        userId: 1,
+        bookId: 10,
+        startedOn: '2026-09-01',
+        endedOn: null,
+        outcome: null,
+        origin: 'kobo',
+        externalProvider: 'hardcover',
+        externalId: '6533798',
+      },
+    );
+    const activity = {
+      userId: 1,
+      bookId: 10,
+      occurredOn: '2026-09-06',
+      origin: 'kobo' as const,
+      progress: 100,
+      finishThreshold: 99,
+      strongRereadEvidence: false,
+      meaningfulActivity: false,
+    };
+    expect((await service.recordActivity(activity))?.status).toBe('read');
+    const completed = { ...attempt };
+    for (const endProgress of [progress, 100, progress, 100]) {
+      expect(await service.recordActivity({ ...activity, progress: endProgress, finishThreshold: 98, meaningfulActivity: true })).toBeNull();
+    }
+    expect(fake.rows).toEqual([completed]);
+    expect(fake.projections).toHaveLength(1);
+    expect(attempt.externalId).toBe('6533798');
+  });
+
+  it('allows sessions to complete an explicitly started reread', async () => {
+    await service.applyManualStatus(1, 10, 'read', '2026-09-01', '2026-09-05', '2026-09-06');
+    await service.applyManualStatus(1, 10, 'rereading', undefined, undefined, '2026-09-06');
+    const result = await service.recordActivity({
+      userId: 1,
+      bookId: 10,
+      occurredOn: '2026-09-07',
+      origin: 'kobo',
+      progress: 100,
+      finishThreshold: 99,
+      strongRereadEvidence: false,
+      meaningfulActivity: true,
+    });
+    expect(result?.status).toBe('read');
+    expect(fake.rows).toHaveLength(2);
+    expect(fake.rows.every((row) => row.outcome === 'completed')).toBe(true);
   });
 
   it('creates a placeholder completion before a legacy manual reread', async () => {

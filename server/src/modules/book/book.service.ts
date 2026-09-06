@@ -2188,15 +2188,10 @@ export class BookService {
   ): Promise<void> {
     const startedAt = Date.now();
     try {
-      const library = await this.libraryService.findOne(file.libraryId);
-      await this.userBookStatusService.autoUpdate(
-        userId,
-        file.bookId,
-        percentage,
-        library.readingThreshold,
-        library.markAsFinishedPercentComplete,
-        activity,
-      );
+      const library = activity.thresholds ? null : await this.libraryService.findOne(file.libraryId);
+      const readingThreshold = activity.thresholds?.readingThreshold ?? library?.readingThreshold;
+      const finishedThreshold = activity.thresholds?.finishedThreshold ?? library?.markAsFinishedPercentComplete;
+      await this.userBookStatusService.autoUpdate(userId, file.bookId, percentage, readingThreshold, finishedThreshold, activity);
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error(String(error));
       this.logger.warn(
